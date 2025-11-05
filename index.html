@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Baby Tracker — Feed & Diaper</title>
+  <style>
+    :root{--bg:#f7fafc;--card:#ffffff;--muted:#667085;--accent:#0b74de}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;margin:0;background:var(--bg);color:#0f172a}
+    header{background:linear-gradient(90deg,#0b74de 0%,#0366b3 100%);color:#fff;padding:14px 16px}
+    .container{max-width:760px;margin:16px auto;padding:0 12px}
+    .card{background:var(--card);border-radius:12px;padding:12px;margin-bottom:12px;box-shadow:0 6px 18px rgba(11, 72, 222, 0.06)}
+    h1{margin:0;font-size:18px}
+    .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    button{border:0;padding:10px 12px;border-radius:8px;font-weight:600;cursor:pointer}
+    .btn-primary{background:var(--accent);color:#fff}
+    .btn-ghost{background:transparent;border:1px solid #e6e9ef}
+    label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+    input, select, textarea{width:100%;padding:8px;border-radius:8px;border:1px solid #e6e9ef}
+    .small{font-size:13px;color:var(--muted)}
+    .log{max-height:320px;overflow:auto}
+    .entry{padding:10px;border-bottom:1px solid #f1f5f9}
+    .entry .meta{font-size:13px;color:var(--muted)}
+    .flex-between{display:flex;justify-content:space-between;align-items:center}
+    .timer{font-weight:700;font-size:20px}
+    .pill{display:inline-block;padding:6px 8px;border-radius:999px;background:#eef6ff;color:#074ea6;font-size:13px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    .hidden{display:none}
+    @media(min-width:700px){.row>div{flex:1}}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Baby Tracker — Feed & Diaper</h1>
+      <div class="small">Free • Works offline • Export CSV • Shareable link</div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Feed Card -->
+    <section class="card" id="feed-card">
+      <div class="flex-between">
+        <div>
+          <label>Feeding</label>
+          <div class="small">Start/Stop timer or add a manual feed</div>
+        </div>
+        <div id="feed-timer-display" class="timer">Not running</div>
+      </div>
+
+      <div class="row" style="margin-top:8px">
+        <div style="flex:1">
+          <label>Feeding type</label>
+          <select id="feed-type">
+            <option value="breast">Breast</option>
+            <option value="bottle">Bottle</option>
+            <option value="pumped">Pumped milk</option>
+            <option value="solid">Solid</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div style="width:120px">
+          <label>Amount (optional)</label>
+          <input id="feed-amount" placeholder="ml or minutes" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:8px">
+        <div style="flex:1">
+          <label>Notes</label>
+          <input id="feed-notes" placeholder="e.g. left side, sleepy" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <button id="feed-start" class="btn-primary">Start</button>
+        <button id="feed-stop" class="btn-ghost" disabled>Stop & Save</button>
+        <button id="feed-manual" class="btn-ghost">Add Manual</button>
+      </div>
+    </section>
+
+    <!-- Diaper Card -->
+    <section class="card">
+      <label>Diaper</label>
+      <div class="row">
+        <div style="flex:1">
+          <select id="diaper-type">
+            <option value="wet">Wet</option>
+            <option value="dirty">Dirty</option>
+            <option value="both">Wet & Dirty</option>
+          </select>
+        </div>
+        <div style="width:140px">
+          <label>&nbsp;</label>
+          <button id="diaper-add" class="btn-primary" style="width:100%">Add Diaper</button>
+        </div>
+      </div>
+      <div style="margin-top:8px">
+        <label>Notes</label>
+        <input id="diaper-notes" placeholder="rash?, color, smell..." />
+      </div>
+    </section>
+
+    <!-- Quick Tools -->
+    <section class="card">
+      <div class="flex-between">
+        <div>
+          <label>Tools</label>
+          <div class="small">Export data, quick share, clear local data</div>
+        </div>
+        <div class="actions">
+          <button id="export-csv" class="btn-ghost">Export CSV</button>
+          <button id="copy-json" class="btn-ghost">Copy JSON</button>
+          <button id="share-link" class="btn-ghost">Share</button>
+          <button id="clear-data" class="btn-ghost" title="Clears local data">Clear</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Log -->
+    <section class="card">
+      <div class="flex-between">
+        <label>Log</label>
+        <div class="small"><span class="pill" id="total-count">0 events</span></div>
+      </div>
+      <div class="log" id="log"></div>
+    </section>
+  </main>
+
+  <script>
+    // --- Simple localStorage-backed tracker ---
+    const LS_KEY = 'baby-tracker-v1';
+    let state = { events: [], feedTimer: null }; // feedTimer: {startTs, type, notes}
+    const formatTime = ts => new Date(ts).toLocaleString();
+    const elapsedText = (ms) => {
+      if (ms <= 0) return '0s';
+      const s = Math.floor(ms/1000);
+      const hh = Math.floor(s/3600); const mm = Math.floor((s%3600)/60); const ss = s%60;
+      if (hh>0) return `${hh}h ${mm}m`;
+      if (mm>0) return `${mm}m ${ss}s`;
+      return `${ss}s`;
+    };
+
+    // DOM
+    const feedStartBtn = document.getElementById('feed-start');
+    const feedStopBtn = document.getElementById('feed-stop');
+    const feedManualBtn = document.getElementById('feed-manual');
+    const feedTimerDisplay = document.getElementById('feed-timer-display');
+    const feedTypeEl = document.getElementById('feed-type');
+    const feedAmountEl = document.getElementById('feed-amount');
+    const feedNotesEl = document.getElementById('feed-notes');
+
+    const diaperTypeEl = document.getElementById('diaper-type');
+    const diaperNotesEl = document.getElementById('diaper-notes');
+    const diaperAddBtn = document.getElementById('diaper-add');
+
+    const exportCsvBtn = document.getElementById('export-csv');
+    const copyJsonBtn = document.getElementById('copy-json');
+    const shareLinkBtn = document.getElementById('share-link');
+    const clearDataBtn = document.getElementById('clear-data');
+
+    const logEl = document.getElementById('log');
+    const totalCountEl = document.getElementById('total-count');
+
+    // load
+    function loadState(){
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (raw) state = JSON.parse(raw);
+      } catch(e){ console.error(e); }
+    }
+    function saveState(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+    loadState();
+
+    // render log
+    function render(){
+      // timer
+      if (state.feedTimer && state.feedTimer.startTs) {
+        const elapsed = Date.now() - state.feedTimer.startTs;
+        feedTimerDisplay.textContent = "Running • " + elapsedText(elapsed);
+        feedStartBtn.disabled = true;
+        feedStopBtn.disabled = false;
+      } else {
+        feedTimerDisplay.textContent = "Not running";
+        feedStartBtn.disabled = false;
+        feedStopBtn.disabled = true;
+      }
+
+      // log
+      logEl.innerHTML = '';
+      const events = [...state.events].reverse();
+      events.forEach(ev => {
+        const div = document.createElement('div');
+        div.className = 'entry';
+        const head = document.createElement('div');
+        head.className = 'flex-between';
+        const left = document.createElement('div');
+        left.innerHTML = `<strong>${ev.kind.toUpperCase()}</strong> — ${ev.title || ''}`;
+        const right = document.createElement('div');
+        right.className = 'meta';
+        right.textContent = formatTime(ev.ts);
+        head.appendChild(left); head.appendChild(right);
+
+        const body = document.createElement('div');
+        body.className = 'meta';
+        body.style.marginTop = '6px';
+        body.innerHTML = Object.entries(ev.details || {})
+          .filter(([k,v]) => v !== undefined && v !== null && v !== '')
+          .map(([k,v]) => `<div><strong>${k}:</strong> ${String(v)}</div>`).join('');
+
+        div.appendChild(head);
+        if (body.innerHTML) div.appendChild(body);
+
+        logEl.appendChild(div);
+      });
+
+      totalCountEl.textContent = `${state.events.length} events`;
+    }
+
+    // timer tick
+    setInterval(() => { if (state.feedTimer && state.feedTimer.startTs) render(); }, 1000);
+
+    // Actions
+    feedStartBtn.addEventListener('click', () => {
+      state.feedTimer = {
+        startTs: Date.now(),
+        type: feedTypeEl.value,
+        notes: feedNotesEl.value || ''
+      };
+      saveState(); render();
+    });
+
+    feedStopBtn.addEventListener('click', () => {
+      if (!state.feedTimer || !state.feedTimer.startTs) return;
+      const start = state.feedTimer.startTs;
+      const end = Date.now();
+      const durationMs = end - start;
+      const ev = {
+        kind: 'feed',
+        title: state.feedTimer.type,
+        ts: end,
+        details: {
+          start: new Date(start).toISOString(),
+          end: new Date(end).toISOString(),
+          duration_minutes: Math.round(durationMs/60000),
+          duration_readable: elapsedText(durationMs),
+          amount: feedAmountEl.value || '',
+          notes: state.feedTimer.notes || ''
+        }
+      };
+      state.events.push(ev);
+      state.feedTimer = null;
+      saveState(); render();
+    });
+
+    feedManualBtn.addEventListener('click', () => {
+      const now = Date.now();
+      const duration = prompt('Enter duration in minutes (optional, leave blank if none):','');
+      const duration_minutes = duration ? parseInt(duration) || 0 : 0;
+      const ev = {
+        kind:'feed',
+        title: feedTypeEl.value,
+        ts: now,
+        details: {
+          start: '',
+          end: new Date(now).toISOString(),
+          duration_minutes,
+          duration_readable: duration_minutes ? `${duration_minutes}m` : '',
+          amount: feedAmountEl.value || '',
+          notes: feedNotesEl.value || ''
+        }
+      };
+      state.events.push(ev);
+      saveState(); render();
+    });
+
+    diaperAddBtn.addEventListener('click', () => {
+      const now = Date.now();
+      const ev = {
+        kind:'diaper',
+        title: diaperTypeEl.value,
+        ts: now,
+        details: {
+          notes: diaperNotesEl.value || ''
+        }
+      };
+      state.events.push(ev);
+      // quick visual feedback
+      diaperNotesEl.value = '';
+      saveState(); render();
+    });
+
+    // Export CSV
+    function toCSV(rows){
+      const esc = v => `"${String(v||'').replace(/"/g,'""')}"`;
+      const header = ['kind','title','timestamp','iso_ts','duration_minutes','duration_readable','amount','notes'];
+      const lines = [header.join(',')];
+      rows.forEach(r => {
+        const d = r.details || {};
+        const line = [
+          r.kind, r.title, r.ts, new Date(r.ts).toISOString(),
+          d.duration_minutes||'',
+          d.duration_readable||'',
+          d.amount||'',
+          (d.notes || '')
+        ].map(esc).join(',');
+        lines.push(line);
+      });
+      return lines.join('\n');
+    }
+
+    exportCsvBtn.addEventListener('click', () => {
+      const csv = toCSV(state.events);
+      const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `baby-tracker-${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    copyJsonBtn.addEventListener('click', async () => {
+      const json = JSON.stringify(state.events, null, 2);
+      try {
+        await navigator.clipboard.writeText(json);
+        alert('JSON copied to clipboard — paste into a file or share.');
+      } catch (e) {
+        // fallback
+        const ta = document.createElement('textarea');
+        ta.value = json; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); ta.remove();
+        alert('Copied to clipboard (fallback).');
+      }
+    });
+
+    shareLinkBtn.addEventListener('click', async () => {
+      // create compressed-ish share string (base64 of JSON)
+      try {
+        const payload = btoa(unescape(encodeURIComponent(JSON.stringify(state.events))));
+        const url = location.href.split('#')[0] + '#data=' + payload;
+        if (navigator.share) {
+          await navigator.share({title:'Baby Tracker data', text:'Baby Tracker export', url});
+        } else {
+          // fallback copy
+          await navigator.clipboard.writeText(url);
+          alert('Shareable link copied to clipboard. Anyone opening it will see the data (if small).');
+        }
+      } catch (e) {
+        alert('Share failed: ' + e.message);
+      }
+    });
+
+    // If page has #data=..., load into memory (allows shareable link)
+    function tryLoadFromHash(){
+      const h = location.hash;
+      if (!h) return;
+      const m = h.match(/data=([^&]+)/);
+      if (!m) return;
+      try {
+        const decoded = decodeURIComponent(escape(atob(m[1])));
+        const arr = JSON.parse(decoded);
+        if (Array.isArray(arr)) {
+          // append as "import" events
+          arr.forEach(it => state.events.push(it));
+          saveState();
+          // clear hash so we don't re-import every reload
+          history.replaceState({}, document.title, location.pathname + location.search);
+          alert('Imported shared data into your local tracker.');
+        }
+      } catch(e){ console.warn('invalid data in hash', e); }
+    }
+    tryLoadFromHash();
+
+    // Clear data
+    clearDataBtn.addEventListener('click', () => {
+      if (!confirm('Clear all local data? This cannot be undone.')) return;
+      state = { events: [], feedTimer: null };
+      saveState(); render();
+    });
+
+    // init
+    render();
+  </script>
+</body>
+</html>
